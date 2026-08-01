@@ -1,0 +1,20 @@
+{
+  "name": "aniapikoto",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AniNeko & AniKoto watch stream API — m3u8/subtitles by MAL ID",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "vercel-build": "echo \"No build step\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cheerio": "^1.1.2",
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  }
+}
