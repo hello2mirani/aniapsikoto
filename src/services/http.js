@@ -91,25 +91,108 @@ function normalizeTitle(value) {
     .replace(/[^a-z0-9]/g, "");
 }
 
+function installmentMeta(value) {
+  const text = cleanText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ");
+  const season =
+    text.match(/(?:season|series)\s*(\d+)/)?.[1] ??
+    text.match(/(\d+)(?:st|nd|rd|th)?\s*(?:season|series)/)?.[1] ??
+    text.match(/\bs(\d+)\b/)?.[1];
+  const part =
+    text.match(/(?:part|cour)\s*(\d+)/)?.[1] ??
+    text.match(/(\d+)(?:st|nd|rd|th)?\s*(?:part|cour)/)?.[1];
+
+  return {
+    season: season ? Number(season) : null,
+    part: part ? Number(part) : null,
+  };
+}
+
+function titleTokens(value) {
+  const meta = installmentMeta(value);
+  const installmentNumbers = new Set(
+    [meta.season, meta.part].filter(Number.isFinite).map(String),
+  );
+
+  return [
+    ...new Set(
+      cleanText(value)
+        .toLowerCase()
+        .replace(/&/g, " and ")
+        .replace(/[^a-z0-9]+/g, " ")
+        .split(" ")
+        .filter(Boolean)
+        .filter((token) => !["season", "series", "part", "cour"].includes(token))
+        .filter((token) => {
+          const ordinal = token.match(/^(\d+)(?:st|nd|rd|th)$/)?.[1];
+          return !installmentNumbers.has(ordinal ?? token);
+        }),
+    ),
+  ];
+}
+
+function scoreTitleMatch(candidateTitle, targetTitle) {
+  const candidate = normalizeTitle(candidateTitle);
+  const target = normalizeTitle(targetTitle);
+  if (!candidate || !target) return Number.NEGATIVE_INFINITY;
+  if (candidate === target) return 10000;
+
+  const candidateMeta = installmentMeta(candidateTitle);
+  const targetMeta = installmentMeta(targetTitle);
+  if (
+    candidateMeta.season &&
+    targetMeta.season &&
+    candidateMeta.season !== targetMeta.season
+  ) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  if (candidateMeta.part && targetMeta.part && candidateMeta.part !== targetMeta.part) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  if (targetMeta.season && targetMeta.season > 1 && !candidateMeta.season) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  if (targetMeta.part && targetMeta.part > 1 && !candidateMeta.part) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  if (!targetMeta.season && candidateMeta.season && candidateMeta.season > 1) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  const candidateTokens = titleTokens(candidateTitle);
+  const targetTokens = titleTokens(targetTitle);
+  if (!candidateTokens.length || !targetTokens.length) return Number.NEGATIVE_INFINITY;
+
+  const candidateSet = new Set(candidateTokens);
+  const targetSet = new Set(targetTokens);
+  const shared = targetTokens.filter((token) => candidateSet.has(token)).length;
+  const targetCoverage = shared / targetSet.size;
+  const candidateCoverage = shared / candidateSet.size;
+  if (targetCoverage < 0.6 || candidateCoverage < 0.5) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  let score = targetCoverage * 1000 + candidateCoverage * 500;
+  if (targetMeta.season && candidateMeta.season === targetMeta.season) score += 500;
+  if (targetMeta.part && candidateMeta.part === targetMeta.part) score += 250;
+  return score;
+}
+
 function getBestSlug(results, targetTitle) {
   if (!results.length) return null;
-  const target = normalizeTitle(targetTitle);
+  const scored = results
+    .map((item) => ({
+      ...item,
+      score: Math.max(
+        scoreTitleMatch(item.name, targetTitle),
+        scoreTitleMatch(item.slug.replace(/-/g, " "), targetTitle),
+      ),
+    }))
+    .filter((item) => Number.isFinite(item.score))
+    .sort((a, b) => b.score - a.score);
 
-  let match = results.find(
-    (item) =>
-      normalizeTitle(item.slug.replace(/-/g, " ")) === target ||
-      normalizeTitle(item.name) === target,
-  );
-  if (match) return match.slug;
-
-  match = results.find(
-    (item) =>
-      normalizeTitle(item.name).includes(target) ||
-      target.includes(normalizeTitle(item.name)),
-  );
-  if (match) return match.slug;
-
-  return results[0].slug;
+  return scored[0]?.slug ?? null;
 }
 
 module.exports = {
@@ -117,4 +200,5 @@ module.exports = {
   cleanText,
   normalizeTitle,
   getBestSlug,
+  scoreTitleMatch,
 };

@@ -2,7 +2,7 @@ const cheerio = require("cheerio");
 const { fetchNekostreamEpisode } = require("./nekostream-mapper");
 const { resolveEmbedStream } = require("./embed-resolver");
 const { fetchJikanAnime } = require("./jikan");
-const { ScrapeSession, cleanText, normalizeTitle } = require("./http");
+const { ScrapeSession, cleanText, scoreTitleMatch } = require("./http");
 
 const BASE = "https://anikototv.to";
 
@@ -69,20 +69,17 @@ async function searchAnikoto(session, title) {
 function pickBestAnikotoSlug(results, targetTitle) {
   if (!results.length) return null;
 
-  const target = normalizeTitle(targetTitle);
   const scored = results.map((item) => {
-    const name = normalizeTitle(item.name);
-    const slug = normalizeTitle(item.slug.replace(/-/g, " "));
-    let score = 0;
-
-    if (name === target || slug === target) score += 1000;
-    if (name.startsWith(target) || slug.startsWith(target)) score += 500;
-    if (name.includes(target) || slug.includes(target)) score += 100;
-    score += item.subCount;
-    score += Math.floor(item.dubCount / 2);
+    const titleScore = Math.max(
+      scoreTitleMatch(item.name, targetTitle),
+      scoreTitleMatch(item.slug.replace(/-/g, " "), targetTitle),
+    );
+    const score = Number.isFinite(titleScore)
+      ? titleScore + Math.min(item.subCount, 100) / 1000 + Math.min(item.dubCount, 100) / 2000
+      : Number.NEGATIVE_INFINITY;
 
     return { ...item, score };
-  });
+  }).filter((item) => Number.isFinite(item.score));
 
   scored.sort((a, b) => b.score - a.score);
   return scored[0]?.slug ?? null;
@@ -345,6 +342,13 @@ async function fetchAnikotoWatchStreams(malId, episodeNumber) {
     slug,
     episodeNumber,
   );
+
+  const resolvedMalId = Number(episodeMeta.malId);
+  if (Number.isFinite(resolvedMalId) && resolvedMalId > 0 && resolvedMalId !== malId) {
+    throw new Error(
+      `AniKoto season mismatch: requested MAL ${malId}, resolved MAL ${resolvedMalId}`,
+    );
+  }
 
   if (!episodeMeta.serverIds) {
     throw new Error(`No server IDs for episode ${episodeNumber}`);
